@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Foil Emboss / Deboss Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ebeae5;
+    --panel:#dedbd3;
+    --text:#131313;
+    --sub:#86837a;
+    --sub-2:#4a4842;
+    --accent:#1d33e0;
+    --accent-text:#ebeae5;
+    --line: rgba(19,19,19,0.35);
+    --line-soft: rgba(19,19,19,0.15);
+    --hole: rgba(19,19,19,0.26);
+    --mono: 'Space Mono', 'Courier New', monospace;
+    --dot: 'VT323', 'Courier New', monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%; overflow:hidden;}
+  body{
+    margin:0;
+    background: var(--bg);
+    color:var(--text);
+    font-family: var(--mono);
+    position:relative;
+  }
+  /* ---- paper grain overlay ---- */
+  body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    z-index:999;
+    pointer-events:none;
+    opacity:0.05;
+    mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+  /* ---- 打孔紙邊:固定貼齊視窗最頂部/最底部,橫跨「整個瀏覽器視窗」寬度
+     (不受下面內容的左右 margin 限制),洞的顏色比底色稍深 ---- */
+  .perf{
+    position:fixed;
+    left:0; right:0;
+    height:20px;
+    z-index:100;
+    background-color:var(--bg);
+    background-image: radial-gradient(circle, var(--hole) 0 4px, transparent 4.4px);
+    background-size: 26px 100%;
+    background-position: 13px center;
+    background-repeat: repeat-x;
+  }
+  .perf.top{ top:0; border-bottom:1px dotted var(--line); }
+  .perf.bottom{ bottom:0; border-top:1px dotted var(--line); }
+  /* 寬度維持置中、不滿版(保留左右 margin);上下跟打孔條之間
+     各留 32px 的距離 */
+  .page{
+    height:100%;
+    width:100%;
+    max-width:1280px;
+    margin:0 auto;
+    padding:32px 16px;
+    display:flex;
+    flex-direction:column;
+  }
+  .masthead{
+    flex:0 0 auto;
+    width:100%;
+    padding:0 0 14px;
+  }
+  .masthead-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--sub-2);
+    padding-bottom:12px;
+  }
+  .masthead hr{
+    border:0;
+    border-top:2px solid var(--text);
+    margin:0;
+  }
+  .layout{
+    flex:1 1 auto;
+    min-height:0;
+    display:flex;
+    flex-direction:row;
+    align-items:flex-start;
+    gap:18px;
+    width:100%;
+    padding:14px 0 0;
+    overflow:hidden;
+  }
+  /* 鋁箔畫布:填滿整個欄位高度,用 cover 裁切填滿、不留灰底 */
+  .stage{
+    position:relative;
+    flex:1 1 auto;
+    min-width:0;
+    height:100%;
+    overflow:hidden;
+    border:1px solid var(--line);
+    background:#000;
+  }
+  .stage::before, .stage::after{
+    content:"+";
+    position:absolute;
+    font-size:12px;
+    color:var(--sub);
+    line-height:1;
+    z-index:2;
+  }
+  .stage::before{ top:-7px; left:-7px; }
+  .stage::after{ bottom:-7px; right:-7px; }
+  .stage-label{
+    position:absolute;
+    top:12px; left:16px; right:16px;
+    z-index:2;
+    display:flex;
+    justify-content:space-between;
+    font-size:10px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:#f2f1ee;
+    text-shadow:0 1px 3px rgba(0,0,0,0.65);
+    pointer-events:none;
+  }
+  .step-controls{
+    position:absolute;
+    right:0;
+    bottom:0;
+    z-index:3;
+    display:flex;
+  }
+  .step-controls button{
+    width:44px;
+    height:38px;
+    border:1px solid var(--text);
+    border-right:none;
+    border-bottom:none;
+    background:transparent;
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:13px;
+    line-height:1;
+    cursor:pointer;
+    transition:background .15s ease, color .15s ease;
+  }
+  .step-controls button:last-child{ border-left:1px solid var(--text); }
+  .step-controls button:not(:disabled){ background:rgba(235,234,229,0.55); }
+  .step-controls button:hover:not(:disabled){ background:var(--text); color:var(--bg); }
+  .step-controls button:disabled{ opacity:0.35; cursor:default; }
+  .step-controls button:disabled:hover{ background:transparent; color:var(--text); }
+  canvas{
+    display:block;
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    cursor:crosshair;
+    touch-action:none;
+    background:#ccc;
+  }
+  /* Press Controls 不強迫撐滿欄位高度(內容少就比畫布短);
+     內容太多裝不下時,面板自己內部捲動,頁面本身仍然完全不會捲動 */
+  .panel{
+    flex:0 0 280px;
+    align-self:flex-start;
+    max-height:100%;
+    overflow-y:auto;
+    overflow-x:hidden;
+    scrollbar-width:thin;
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    gap:16px;
+    background:var(--panel);
+    padding:20px 22px;
+    border:1px solid var(--line);
+    position:relative;
+  }
+  .panel::before, .panel::after{
+    content:"+";
+    position:absolute;
+    font-size:12px;
+    color:var(--sub);
+    line-height:1;
+  }
+  .panel::before{ top:-7px; left:-7px; }
+  .panel::after{ bottom:-7px; right:-7px; }
+  .panel h2{
+    font-size:12px;
+    font-weight:700;
+    color:var(--text);
+    margin:0 0 -2px;
+    letter-spacing:0.16em;
+    text-transform:uppercase;
+    padding-bottom:12px;
+    border-bottom:1px dashed var(--line);
+  }
+  .group{
+    display:flex;
+    flex-direction:column;
+    align-items:stretch;
+    gap:8px;
+  }
+  .group-row{
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  .group-row .group{
+    flex:1 1 0;
+    min-width:0;
+  }
+  .group .row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .group label.title{
+    font-size:10.5px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--sub-2);
+  }
+  .segmented{
+    display:flex;
+    border:1px solid var(--line);
+    gap:0;
+  }
+  .segmented button{
+    flex:1;
+    border:none;
+    background:transparent;
+    color:var(--sub-2);
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    padding:9px 10px;
+    cursor:pointer;
+    transition:all .15s ease;
+  }
+  .segmented button + button{ border-left:1px solid var(--line); }
+  .segmented button.active{
+    background:var(--text);
+    color:var(--bg);
+  }
+  input[type=range]{
+    flex:1;
+    width:100%;
+    accent-color: var(--accent);
+  }
+  .val{
+    font-size:12px;
+    color:var(--sub-2);
+    width:28px;
+    text-align:right;
+    font-weight:700;
+  }
+  /* ---- Photoshop 式的角度轉盤 + 可直接輸入數字的欄位 ---- */
+  .group .row.angle-row{ gap:12px; }
+  .angle-dial{
+    flex:0 0 auto;
+    width:38px;
+    height:38px;
+    border-radius:50%;
+    background:var(--bg);
+    border:1px solid var(--line);
+    box-shadow:inset 0 1px 3px rgba(0,0,0,0.18);
+    position:relative;
+    cursor:pointer;
+    touch-action:none;
+  }
+  .angle-dial::before{
+    content:"";
+    position:absolute;
+    left:50%; top:50%;
+    width:4px; height:4px;
+    margin:-2px 0 0 -2px;
+    border-radius:50%;
+    background:var(--sub-2);
+  }
+  .angle-needle{
+    position:absolute;
+    left:50%; top:50%;
+    width:13px; height:2px;
+    margin-top:-1px;
+    background:var(--accent);
+    transform-origin:0 50%;
+    pointer-events:none;
+  }
+  .num-box{
+    flex:0 0 auto;
+    display:flex;
+    align-items:center;
+    gap:3px;
+    border:1px solid var(--line);
+    background:var(--bg);
+    padding:5px 7px;
+  }
+  .num-box input[type=number]{
+    width:34px;
+    border:none;
+    background:transparent;
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--text);
+    text-align:right;
+    padding:0;
+    -moz-appearance:textfield;
+  }
+  .num-box input[type=number]:focus{ outline:none; color:var(--accent); }
+  .num-box input[type=number]::-webkit-outer-spin-button,
+  .num-box input[type=number]::-webkit-inner-spin-button{
+    -webkit-appearance:none;
+    margin:0;
+  }
+  .num-box .num-suffix{
+    font-size:10.5px;
+    color:var(--sub);
+  }
+  .btn{
+    border:1px solid var(--text);
+    background:transparent;
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    padding:11px 16px;
+    cursor:pointer;
+    transition:background .15s ease, color .15s ease;
+    width:100%;
+  }
+  .btn:hover{ background:var(--text); color:var(--bg); }
+  .btn.primary{
+    background:var(--text);
+    color:var(--bg);
+  }
+  .btn.primary:hover{ background:var(--accent); border-color:var(--accent); }
+  .btn:disabled{ opacity:0.35; cursor:default; }
+  .btn:disabled:hover{ background:transparent; color:var(--text); }
+  .divider{
+    height:0;
+    width:100%;
+    border-top:1px dashed var(--line);
+  }
+  .actions{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+  .hint{
+    font-size:11px;
+    color:var(--sub);
+    margin:2px 0 0;
+    line-height:1.6;
+  }
+  @media (max-width: 860px){
+    .layout{ flex-direction:column; }
+    .stage{ width:100%; height:56%; flex:0 0 auto; }
+    .panel{ flex:1 1 auto; width:100%; max-height:44%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+<div class="perf top"></div>
+
+<div class="masthead">
+  <div class="masthead-row">
+    <span>Specimen No. 014 &middot; Foil Press Apparatus</span>
+    <span>Rev. 02</span>
+  </div>
+  <hr>
+</div>
+
+<div class="layout">
+  <div class="stage">
+    <div class="stage-label"><span>Fig. 01 &mdash; Press Surface</span><span id="stageStatus">Emboss</span></div>
+    <canvas id="foil"></canvas>
+    <div class="step-controls">
+      <button id="undoBtn" title="Undo" disabled>&#10094;</button>
+      <button id="redoBtn" title="Redo" disabled>&#10095;</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Press Controls</h2>
+
+    <div class="group">
+      <label class="title">Mode</label>
+      <div class="segmented">
+        <button id="modeEmboss" class="active">Emboss ▲</button>
+        <button id="modeDeboss">Deboss ▼</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="group">
+      <label class="title">Brush Size</label>
+      <div class="row">
+        <input type="range" id="brushSize" min="8" max="90" value="34">
+        <span class="val" id="brushSizeVal">34</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <label class="title">Smoothing</label>
+      <div class="row">
+        <input type="range" id="smoothing" min="0" max="100" value="0">
+        <span class="val" id="smoothingVal">0</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <label class="title">Depth</label>
+      <div class="row">
+        <input type="range" id="depth" min="4" max="48" value="24">
+        <span class="val" id="depthVal">24</span>
+      </div>
+    </div>
+
+    <div class="group-row">
+      <div class="group">
+        <label class="title">Light Angle</label>
+        <div class="row angle-row">
+          <div class="angle-dial" id="angleDial">
+            <div class="angle-needle" id="angleNeedle"></div>
+          </div>
+          <div class="num-box">
+            <input type="number" id="lightAngle" min="0" max="359" value="315">
+            <span class="num-suffix">&deg;</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <label class="title">Intensity</label>
+        <div class="row">
+          <input type="range" id="lightIntensity" min="20" max="200" step="5" value="100">
+        </div>
+        <div class="num-box">
+          <input type="number" id="lightIntensityVal" min="20" max="200" step="5" value="100">
+          <span class="num-suffix">%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="group">
+      <input type="file" id="svgUpload" accept=".svg,image/svg+xml" style="display:none">
+      <button class="btn" id="svgUploadBtn">Upload SVG Stamp…</button>
+    </div>
+
+    <div class="group" id="stampControls" style="display:none">
+      <label class="title">Stamp Size</label>
+      <div class="row">
+        <input type="range" id="stampScale" min="20" max="1000" step="5" value="100">
+        <span class="val" id="stampScaleVal">100</span>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="applyStampBtn">Apply Stamp</button>
+        <button class="btn" id="removeStampBtn">Remove Stamp</button>
+      </div>
+      <p class="hint">Drag on the foil to position the stamp, then Apply. You can apply it more than once.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="actions">
+      <button class="btn" id="resetBtn">Reset Foil</button>
+      <button class="btn primary" id="downloadBtn">Download Image</button>
+    </div>
+  </div>
+</div>
+
+<div class="perf bottom"></div>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('foil');
+  const ctx = canvas.getContext('2d', { willReadFrequently:true });
+
+  // ---- 內部解析度:跟著螢幕的裝置畫素比例放大(最高 2x),
+  // 避免在 Retina/HiDPI 螢幕上把低解析度畫布拉伸造成糊糊的模糊感 ----
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const W = Math.round(960 * DPR), H = Math.round(580 * DPR);
+  canvas.width = W;
+  canvas.height = H;
+
+  // ---- 狀態 ----
+  let mode = 1; // 1 = emboss(凸), -1 = deboss(凹)
+  let brushRadius = 34 * DPR; // 內部像素半徑,隨 DPR 縮放,維持跟滑桿數字一致的視覺大小
+  let lightAngleDeg = 315;
+  let lightIntensity = 1; // 「Light Intensity」滑桿:整體光影強度,調低可以讓陰影不要太深
+  let MAX_HEIGHT = 24; // 「Depth」滑桿:壓痕能壓多深的上限,越大浮凸/壓凹的立體感越明顯
+
+  // ---- 資料陣列 ----
+  // 高度圖全部從 0 開始、完全平:凹凸完全來自使用者的筆刷或壓紋,
+  // 「素材本身的質感」改用真實照片當底圖,而不是再用程式生成假紋理。
+  const heightMap = new Float32Array(W*H);
+
+  // ---- 單次筆畫(從按下到放開)專用的暫存:strokeBase 是這一筆開始前的
+  // 高度快照(固定不變),strokeMap 是「這一筆自己」從 0 開始累積出的形狀
+  // (用原本單純的 Math.max/min 夾住,不會因為同一筆畫自己重疊而疊加暴衝)。
+  // 畫的時候即時拿 strokeBase 跟 strokeMap 做一次平滑融合寫回 heightMap——
+  // 融合永遠是「兩個穩定值的融合」,不是拿上一次已經融合過的結果再融合一次,
+  // 才不會像直接對 heightMap 疊加平滑函式那樣,同一條直線被路徑上密集的
+  // 取樣點重複融合幾十次,疊出一片不該有的平台。
+  let strokeBase = null, strokeMap = null;
+
+  // ---- 復原(Undo):每個獨立動作(一筆拖曳、套用一次印章、重置)
+  // 前都先把當下的高度圖存一份快照,最多保留 10 步避免記憶體爆掉 ----
+  const undoStack = [];
+  const redoStack = [];
+  const UNDO_LIMIT = 10;
+  function updateStepButtons(){
+    const u = document.getElementById('undoBtn');
+    const r = document.getElementById('redoBtn');
+    if (u) u.disabled = !undoStack.length;
+    if (r) r.disabled = !redoStack.length;
+  }
+  function pushUndo(){
+    undoStack.push(heightMap.slice());
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    redoStack.length = 0;
+    updateStepButtons();
+  }
+  function doUndo(){
+    if (!undoStack.length) return;
+    redoStack.push(heightMap.slice());
+    heightMap.set(undoStack.pop());
+    fullRepaint();
+    updateStepButtons();
+  }
+  function doRedo(){
+    if (!redoStack.length) return;
+    undoStack.push(heightMap.slice());
+    heightMap.set(redoStack.pop());
+    fullRepaint();
+    updateStepButtons();
+  }
+  const img = ctx.createImageData(W, H);
+  const pixels = img.data;
+  let photo = null; // 底圖照片鋪滿畫布後的像素(Uint8ClampedArray,W*H*4)
+
+  // ---- 產生平滑、高反光的鋁箔質感貼圖(取代原本上傳的實拍照片):
+  // 只疊細緻的微粒顆粒 + 柔和的髮絲紋理 + 大範圍平滑明暗漸層模擬金屬反光,
+  // 完全不做任何皺褶、摺痕、浮雕或雜訊,保持平整連續,適合當全螢幕底圖 ----
+  function hash2(ix, iy, seed){
+    let h = Math.imul(ix, 374761393) ^ Math.imul(iy, 668265263) ^ Math.imul(seed, 2246822519);
+    h = Math.imul(h ^ (h>>>13), 1274126177);
+    h = h ^ (h>>>16);
+    return (h>>>0) / 4294967295;
+  }
+  // cellSizeY 省略時等於 cellSizeX(等向雜訊);分開指定可做出拉長的異向雜訊,
+  // 用來做細長柔和的髮絲紋理(而不是雜亂的皺褶)
+  function noiseLayer(cellSizeX, cellSizeY, seed){
+    if (seed === undefined){ seed = cellSizeY; cellSizeY = cellSizeX; }
+    const gw = Math.floor(W/cellSizeX)+2;
+    const gh = Math.floor(H/cellSizeY)+2;
+    const grid = new Float32Array(gw*gh);
+    for (let gy=0; gy<gh; gy++){
+      for (let gx=0; gx<gw; gx++) grid[gy*gw+gx] = hash2(gx, gy, seed);
+    }
+    const out = new Float32Array(W*H);
+    for (let y=0; y<H; y++){
+      const fy = y/cellSizeY;
+      const gy0 = Math.floor(fy);
+      let ty = fy-gy0; ty = ty*ty*(3-2*ty);
+      const row0 = gy0*gw, row1 = (gy0+1)*gw;
+      for (let x=0; x<W; x++){
+        const fx = x/cellSizeX;
+        const gx0 = Math.floor(fx);
+        let tx = fx-gx0; tx = tx*tx*(3-2*tx);
+        const v00 = grid[row0+gx0], v10 = grid[row0+gx0+1];
+        const v01 = grid[row1+gx0], v11 = grid[row1+gx0+1];
+        const a = v00+(v10-v00)*tx;
+        const b = v01+(v11-v01)*tx;
+        out[y*W+x] = a+(b-a)*ty;
+      }
+    }
+    return out;
+  }
+
+  function generateFoilTexture(onReady){
+    const seed = Math.floor(Math.random()*100000);
+
+    // 大範圍、非常平滑的柔和明暗過渡(像金屬板被單一光源掃過),
+    // cell 很大代表整張畫布只有一兩個起伏週期,不會產生任何細碎紋理
+    const sheenA = noiseLayer(560, 420, seed+1);
+    const sheenB = noiseLayer(340, 600, seed+2);
+
+    // 細緻的髮絲紋理:x 方向 cell 很大(拉長)、y 方向 cell 很小,
+    // 做出一條條細長、柔和的橫向拉絲感,而不是雜亂的皺褶
+    const streakA = noiseLayer(260, 2.6, seed+3);
+    const streakB = noiseLayer(90, 1.6, seed+4);
+
+    // 細膩的微粒顆粒,只在最小尺度疊加,絕不影響整體平整度
+    const grainA = noiseLayer(9, 9, seed+5);
+    const grainB = noiseLayer(4, 4, seed+6);
+
+    // noiseLayer 內部用平滑插值(smoothstep),所以上面幾層疊起來還是
+    // 「軟」的、邊緣會糊開;這裡額外疊一層完全不插值的逐像素亂數,
+    // 做出銳利的細顆粒感(像真的金屬表面的細微反光雜訊),才不會整體看起來霧霧的
+    const sharpGrain = new Float32Array(W*H);
+    for (let i=0; i<W*H; i++) sharpGrain[i] = Math.random();
+
+    const data = new Uint8ClampedArray(W*H*4);
+    for (let y=0; y<H; y++){
+      for (let x=0; x<W; x++){
+        const idx = y*W+x;
+        let v = 203;
+        v += (sheenA[idx]-0.5)*64;
+        v += (sheenB[idx]-0.5)*36;
+        v += (streakA[idx]-0.5)*14;
+        v += (streakB[idx]-0.5)*8;
+        v += (grainB[idx]-0.5)*10;
+        v += (grainA[idx]-0.5)*6;
+        v += (sharpGrain[idx]-0.5)*16;
+        if (v>250) v=250; if (v<55) v=55;
+        const p = idx*4;
+        data[p]   = v;
+        data[p+1] = v;
+        data[p+2] = Math.min(255, v*1.01);
+        data[p+3] = 255;
+      }
+    }
+    photo = data;
+    if (onReady) onReady();
+  }
+
+  // ---- 光源向量:只用來讓壓痕呈現有方向性的光影,不再對整張照片疊加
+  // 任何人工漸層或雜訊,平面(沒被按過)的地方永遠原樣顯示底圖照片 ----
+  let light = {x:0,y:0,z:0};
+  let flatDiff = 0, flatSpec = 0; // 完全平面時的基準亮度,之後只疊「跟平面的差異」
+  function updateLight(){
+    const rad = lightAngleDeg * Math.PI/180;
+    const elev = 55 * Math.PI/180;
+    light.x = Math.cos(rad)*Math.cos(elev);
+    light.y = Math.sin(rad)*Math.cos(elev);
+    light.z = Math.sin(elev);
+
+    flatDiff = Math.max(0, light.z);
+    let hx=light.x, hy=light.y, hz=light.z+1;
+    const hlen = Math.hypot(hx,hy,hz) || 1;
+    hx/=hlen; hy/=hlen; hz/=hlen;
+    const ndoth0 = Math.max(0, hz);
+    flatSpec = Math.pow(ndoth0, SHIN_TIGHT)*SPEC_TIGHT + Math.pow(ndoth0, SHIN_BROAD)*SPEC_BROAD;
+  }
+
+  const NORMAL_SCALE = 1.4; // 跟 Depth 一起決定陰影多快就死黑:調低才能讓整條 Depth 滑桿有感,不會低、中、高都一樣黑
+  const DIFFUSE_GAIN = 150; // 壓痕亮暗對比的強度
+  const SPEC_TIGHT = 1.3, SHIN_TIGHT = 90;
+  const SPEC_BROAD = 0.6, SHIN_BROAD = 6;
+  const SPEC_GAIN = 255;
+
+  updateLight();
+
+  // 算出 (x,y) 這個像素「跟平面相比多出來的光影」,直接疊到照片原本的 RGB 上;
+  // 完全沒被按壓的地方 delta 必然是 0,畫面就是原始照片,不會被其他效果蓋掉
+  function shadeAndWritePixel(x, y, pIdx){
+    const xm = x>0?x-1:x, xp = x<W-1?x+1:x;
+    const ym = y>0?y-1:y, yp = y<H-1?y+1:y;
+    const hL = heightMap[y*W+xm], hR = heightMap[y*W+xp];
+    const hU = heightMap[ym*W+x], hD = heightMap[yp*W+x];
+
+    let delta = 0;
+    if (hL!==hR || hU!==hD){
+      let nx = -(hR-hL)*NORMAL_SCALE;
+      let ny = -(hD-hU)*NORMAL_SCALE;
+      let nz = 1;
+      const len = Math.hypot(nx,ny,nz) || 1;
+      nx/=len; ny/=len; nz/=len;
+
+      const diff = Math.max(0, nx*light.x + ny*light.y + nz*light.z);
+
+      let hx = light.x, hy = light.y, hz = light.z + 1;
+      const hlen = Math.hypot(hx,hy,hz) || 1;
+      hx/=hlen; hy/=hlen; hz/=hlen;
+      const ndoth = Math.max(0, nx*hx + ny*hy + nz*hz);
+      const spec = Math.pow(ndoth, SHIN_TIGHT)*SPEC_TIGHT + Math.pow(ndoth, SHIN_BROAD)*SPEC_BROAD;
+
+      delta = ((diff-flatDiff)*DIFFUSE_GAIN + (spec-flatSpec)*SPEC_GAIN) * lightIntensity;
+    }
+
+    let r = photo[pIdx]+delta, g = photo[pIdx+1]+delta, b = photo[pIdx+2]+delta;
+    if (r>255) r=255; else if (r<0) r=0;
+    if (g>255) g=255; else if (g<0) g=0;
+    if (b>255) b=255; else if (b<0) b=0;
+    pixels[pIdx] = r; pixels[pIdx+1] = g; pixels[pIdx+2] = b; pixels[pIdx+3] = 255;
+  }
+
+  function paintRegion(minX, minY, maxX, maxY){
+    if (!photo) return;
+    minX = Math.max(0, minX); minY = Math.max(0, minY);
+    maxX = Math.min(W-1, maxX); maxY = Math.min(H-1, maxY);
+    if (maxX<minX || maxY<minY) return;
+    for (let y=minY; y<=maxY; y++){
+      const row = y*W;
+      for (let x=minX; x<=maxX; x++){
+        shadeAndWritePixel(x, y, (row+x)*4);
+      }
+    }
+    ctx.putImageData(img, 0, 0, minX, minY, maxX-minX+1, maxY-minY+1);
+    if (pendingStamp) drawStampOverlay();
+  }
+
+  function fullRepaint(){
+    paintRegion(0,0,W-1,H-1);
+  }
+
+  // ---- 筆刷平滑(手震修正):數值越高,筆刷越會延遲追上滑鼠,畫出來的線越平滑 ----
+  let smoothing = 0; // 0-100
+
+  // ---- SVG 壓紋:上傳一張 SVG,拖曳定位後蓋章式地把它的形狀壓進鋁箔 ----
+  let pendingStamp = null; // { img, url, baseW, baseH, cx, cy, scalePct }
+  let draggingStamp = false;
+  let stampDragDX = 0, stampDragDY = 0;
+
+  function stampDestSize(){
+    const f = pendingStamp.scalePct/100;
+    return [pendingStamp.baseW*f, pendingStamp.baseH*f];
+  }
+
+  // 把 SVG 形狀的邊緣做成斜面(bevel)而不是直上直下的懸崖:用模糊把 alpha
+  // 遮罩的邊界拉出一段漸層寬度,中心仍然是滿深度的平台,邊緣則平滑斜降到 0,
+  // 這樣壓出來的形狀才會像真的被壓進去,而不是貼上去的一層剪影。斜面寬度跟著
+  // 「筆刷大小」設定走(筆刷越大,邊緣越鈍),同時不超過印章自身尺寸的一個比例,
+  // 避免小印章被糊成一團。回傳的 plan 給 applyStamp() 跟即時預覽共用同一份計算。
+  function buildStampPlan(){
+    if (!pendingStamp) return null;
+    const [dw, dh] = stampDestSize();
+    const destW = Math.max(1, Math.round(dw));
+    const destH = Math.max(1, Math.round(dh));
+    const px0 = Math.round(pendingStamp.cx - dw/2);
+    const py0 = Math.round(pendingStamp.cy - dh/2);
+
+    const bevelPx = Math.max(1.3, Math.min(Math.min(destW, destH) * 0.12, brushRadius * 0.12));
+    const pad = Math.ceil(bevelPx * 3);
+    const tw = destW + pad*2, th = destH + pad*2;
+    const tmp = document.createElement('canvas');
+    tmp.width = tw; tmp.height = th;
+    const tctx = tmp.getContext('2d');
+    tctx.clearRect(0, 0, tw, th);
+    tctx.filter = `blur(${bevelPx}px)`;
+    tctx.drawImage(pendingStamp.img, pad, pad, destW, destH);
+    tctx.filter = 'none';
+    const data = tctx.getImageData(0, 0, tw, th).data;
+
+    // 模糊會把滿遮罩的 alpha 從 1 拉低一點(尤其細的線條),這裡量測平台區的
+    // alpha 當作「滿深度基準」,重新正規化,確保平台中心還是壓到該有的深度
+    let plateauAlpha = 0;
+    for (let my=0; my<destH; my++){
+      for (let mx=0; mx<destW; mx++){
+        const a = data[((my+pad)*tw+(mx+pad))*4+3] / 255;
+        if (a>plateauAlpha) plateauAlpha = a;
+      }
+    }
+    if (plateauAlpha < 0.05) plateauAlpha = 1;
+
+    // 跟筆刷一致,只用「深度」一個參數決定蓋一次章能壓多深
+    const incBase = mode * MAX_HEIGHT * 0.375 / plateauAlpha;
+    return { destW, destH, px0, py0, pad, tw, th, data, incBase };
+  }
+
+  // 定位階段只顯示印章原本的平面樣子(半透明剪影 + 虛線框),方便對位置、
+  // 看大小,不先套用 Mode/Depth/光源運算;真正的立體光影效果留到按下
+  // 「Apply Stamp」才計算、才看得到,定位跟套用兩個階段分清楚
+  function drawStampOverlay(){
+    if (!pendingStamp || !pendingStamp.showGhost) return;
+    const [dw, dh] = stampDestSize();
+    const x = pendingStamp.cx - dw/2, y = pendingStamp.cy - dh/2;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(pendingStamp.img, x, y, dw, dh);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // 只還原底圖(不重算光影)再畫上 overlay,拖曳定位時才能流暢更新
+  function redrawOverlayOnly(){
+    ctx.putImageData(img, 0, 0);
+    drawStampOverlay();
+  }
+
+  function applyStamp(){
+    if (!pendingStamp) return;
+    pushUndo();
+    const plan = buildStampPlan();
+    if (!plan) return;
+    const { px0, py0, pad, tw, th, data, incBase } = plan;
+
+    // 要蓋滿整個模糊後的 tw x th 範圍(而不是只蓋原本 destW x destH 那個方框),
+    // 不然斜面往外暈開的部分會被切掉——形狀邊緣剛好貼到自己原始方框的地方
+    // (例如花瓣、葉尖頂到邊界)就會變成一刀切平、沒有斜面的硬邊
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    for (let my=0; my<th; my++){
+      const cy2 = py0 - pad + my;
+      if (cy2<0 || cy2>=H) continue;
+      for (let mx=0; mx<tw; mx++){
+        const cx2 = px0 - pad + mx;
+        if (cx2<0 || cx2>=W) continue;
+        const a = data[(my*tw+mx)*4+3] / 255;
+        if (a<=0.004) continue;
+        const idx = cy2*W+cx2;
+        let h = heightMap[idx] + incBase*a;
+        if (h>MAX_HEIGHT) h=MAX_HEIGHT;
+        if (h<-MAX_HEIGHT) h=-MAX_HEIGHT;
+        heightMap[idx] = h;
+        if (cx2<minX) minX=cx2; if (cx2>maxX) maxX=cx2;
+        if (cy2<minY) minY=cy2; if (cy2>maxY) maxY=cy2;
+      }
+    }
+    // 壓下去之後就把半透明的定位預覽收起來,畫面只留下真正壓進鋁箔的浮雕效果,
+    // 不會有一層貼在表面上的剪影;要再壓一次時,一拖曳就會重新顯示預覽
+    pendingStamp.showGhost = false;
+    if (maxX>=minX){
+      paintRegion(minX-1, minY-1, maxX+1, maxY+1);
+    } else {
+      fullRepaint();
+    }
+  }
+
+  function clearStamp(){
+    if (pendingStamp && pendingStamp.url) URL.revokeObjectURL(pendingStamp.url);
+    pendingStamp = null;
+    fullRepaint();
+  }
+
+  function loadSvgStamp(file){
+    const url = URL.createObjectURL(file);
+    const svgImg = new Image();
+    svgImg.onload = ()=>{
+      const iw = svgImg.naturalWidth || 300;
+      const ih = svgImg.naturalHeight || 300;
+      const maxDim = Math.min(W,H) * 0.55;
+      const fit = Math.min(maxDim/iw, maxDim/ih, 1) || 1;
+      if (pendingStamp && pendingStamp.url) URL.revokeObjectURL(pendingStamp.url);
+      pendingStamp = {
+        img: svgImg, url,
+        baseW: iw*fit, baseH: ih*fit,
+        cx: W/2, cy: H/2,
+        scalePct: 100,
+        showGhost: true
+      };
+      stampScaleInput.value = 100;
+      stampScaleVal.textContent = 100;
+      stampControls.style.display = '';
+      fullRepaint();
+    };
+    svgImg.onerror = ()=>{
+      URL.revokeObjectURL(url);
+      alert('Could not load this file as an SVG image.');
+    };
+    svgImg.src = url;
+  }
+
+  // ---- 筆刷 ----
+  // 單一個像素點在「這一筆畫自己的暫存 strokeMap」裡的高度更新:上限跟著
+  // 這一下的衰減曲線走(中心趨近 Depth 上限、邊緣趨近 0),而不是整個筆刷
+  // 半徑共用同一個絕對上限——長按到極致時壓痕會收斂成中心最尖、邊緣歸零的
+  // 小尖點/凹點,不會整個筆刷範圍一起被墊平。同時只往這一筆的方向推、不會
+  // 倒退,筆刷掃過的地方也不會因為中心移開、衰減值變小而被尾隨削掉。這裡
+  // 一定要用精確的 Math.max/min,不能换成會疊加的平滑函式——同一條直線會被
+  // 路徑上非常多個取樣點重複蓋到,平滑函式只要疊加一點點,疊個幾十次就會把
+  // 整條線的斷面墊成一片平台,而不是圓弧。彎道/勾勾交叉處改成把輸入路徑
+  // 本身先用 stampSmoothPath 鋪平滑,不要在這裡用會疊加的平滑函式硬湊。
+  function smoothMax(a, b, k){
+    if (k<=0) return Math.max(a, b);
+    const h = Math.max(k - Math.abs(a-b), 0) / k;
+    return Math.max(a, b) + h*h*k*0.25;
+  }
+  function smoothMin(a, b, k){
+    if (k<=0) return Math.min(a, b);
+    const h = Math.max(k - Math.abs(a-b), 0) / k;
+    return Math.min(a, b) - h*h*k*0.25;
+  }
+
+  // 真正畫到 heightMap 上的值 = 「這一筆畫自己的形狀(strokeMap,用上面
+  // 單純不疊加的 max/min 算出)」跟「這一筆開始之前就有的底(strokeBase,
+  // 按下滑鼠那一刻的快照,全程固定不變)」做一次平滑融合。兩邊分開算、
+  // 融合永遠是兩個穩定值現算現融,不是拿上一次已經融合過的 heightMap 結果
+  // 再融合一次——這樣同一條線被路徑上密集的取樣點重複寫入,也只是反覆算出
+  // 同一個穩定的融合結果,不會像直接對 heightMap 疊加平滑函式那樣,每多蓋
+  // 一次就再墊高一點、最後把整條線疊成一片平台。只有兩筆畫(或同一筆畫自己
+  // 繞回來交叉)在高度夠接近的地方,才會在交界處圓滑地鼓起融合,不會留下
+  // 硬折痕;融合半徑跟著當下高度的量級縮放,兩邊都接近 0 時融合半徑也跟著
+  // 趨近 0,不會在空白區域留下不該有的底座凸起。
+  function applyStrokeDelta(idx, t, inc){
+    const base = strokeBase[idx];
+    const existing = strokeMap[idx];
+    const candidate = existing + inc*t;
+    let sm;
+    if (inc >= 0){
+      const cap = MAX_HEIGHT*t;
+      sm = Math.min(candidate, Math.max(existing, cap));
+    } else {
+      const cap = -MAX_HEIGHT*t;
+      sm = Math.max(candidate, Math.min(existing, cap));
+    }
+    strokeMap[idx] = sm;
+
+    const k = 0.9 * Math.max(Math.abs(base), Math.abs(sm));
+    let h = inc >= 0 ? smoothMax(base, sm, k) : smoothMin(base, sm, k);
+    if (h > MAX_HEIGHT) h = MAX_HEIGHT;
+    if (h < -MAX_HEIGHT) h = -MAX_HEIGHT;
+    heightMap[idx] = h;
+  }
+
+  function stamp(cx, cy, dirtyBox){
+    const r = brushRadius;
+    const inc = MAX_HEIGHT * 0.033 * mode;
+    const minX = Math.floor(cx-r), maxX = Math.ceil(cx+r);
+    const minY = Math.floor(cy-r), maxY = Math.ceil(cy+r);
+    const x0 = Math.max(0,minX), x1 = Math.min(W-1,maxX);
+    const y0 = Math.max(0,minY), y1 = Math.min(H-1,maxY);
+    for (let y=y0; y<=y1; y++){
+      for (let x=x0; x<=x1; x++){
+        const dx = x-cx, dy = y-cy;
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        if (dist>r) continue;
+        let t = 1 - dist/r;
+        t = t*t*(3-2*t); // smoothstep:柔和、自然的圓弧斷面,邊緣平滑歸零,不會有突兀的硬邊
+        applyStrokeDelta(y*W+x, t, inc);
+      }
+    }
+    dirtyBox.minX = Math.min(dirtyBox.minX, x0-1);
+    dirtyBox.minY = Math.min(dirtyBox.minY, y0-1);
+    dirtyBox.maxX = Math.max(dirtyBox.maxX, x1+1);
+    dirtyBox.maxY = Math.max(dirtyBox.maxY, y1+1);
+  }
+
+  // ---- 指標互動 ----
+  let isDown = false;
+  // raw = 滑鼠實際位置;sm = 經過平滑延遲後、真正拿來蓋章的位置
+  let rawX = 0, rawY = 0;
+  let smX = 0, smY = 0, prevSmX = 0, prevSmY = 0;
+  // 整筆畫(從按下到放開)累積的髒矩形——筆畫結束時用來對這整個範圍做一次
+  // 收尾的模糊,把「這一筆畫跟底下原本就有的壓痕」交疊的地方抹平,不管交疊
+  // 是跟別筆畫、還是自己繞回來交叉,統一在這裡處理,不用在每種交疊情境各自
+  // 想一套融合公式。
+  let strokeDirty = null;
+  function mergeDirty(target, box){
+    if (!target || box.maxX < box.minX) return;
+    target.minX = Math.min(target.minX, box.minX);
+    target.minY = Math.min(target.minY, box.minY);
+    target.maxX = Math.max(target.maxX, box.maxX);
+    target.maxY = Math.max(target.maxY, box.maxY);
+  }
+  // 筆畫交疊處會有一條硬折痕,是因為 smoothMax/smoothMin 只在「兩邊高度剛好
+  // 接近」的那條窄線上幫忙融合,離開那條線一點點,兩邊高度很快就拉開差距,
+  // 融合效果來不及在空間上鋪開,視覺上還是看得出一條清楚的分界(尤其兩筆
+  // 交叉成的那個十字,從遠一點看就是四片分得清清楚楚的面)。與其再去調那些
+  // 融合公式的參數,這裡直接在筆畫畫完、要收尾的時候,對整筆畫畫過的範圍
+  // 做一次小範圍的方框模糊(box blur)——不管折痕是怎麼來的,模糊都能把它
+  // 物理上抹平,順便也讓筆刷本身的邊緣更柔和一點。只在放開滑鼠那一刻做一次
+  // (不是每個 frame 都做),效能上不是問題。
+  function blurHeightRegion(minX, minY, maxX, maxY, radius){
+    minX = Math.max(0, Math.floor(minX)); minY = Math.max(0, Math.floor(minY));
+    maxX = Math.min(W-1, Math.ceil(maxX)); maxY = Math.min(H-1, Math.ceil(maxY));
+    if (radius<=0 || maxX<minX || maxY<minY) return;
+    const w = maxX-minX+1, h = maxY-minY+1;
+    const src = new Float32Array(w*h);
+    for (let y=0; y<h; y++){
+      const row=(minY+y)*W;
+      for (let x=0; x<w; x++) src[y*w+x] = heightMap[row+minX+x];
+    }
+    const tmp = new Float32Array(w*h);
+    for (let y=0; y<h; y++){
+      for (let x=0; x<w; x++){
+        let sum=0, cnt=0;
+        for (let k=-radius; k<=radius; k++){
+          const xx = x+k;
+          if (xx<0 || xx>=w) continue;
+          sum += src[y*w+xx]; cnt++;
+        }
+        tmp[y*w+x] = sum/cnt;
+      }
+    }
+    for (let x=0; x<w; x++){
+      for (let y=0; y<h; y++){
+        let sum=0, cnt=0;
+        for (let k=-radius; k<=radius; k++){
+          const yy = y+k;
+          if (yy<0 || yy>=h) continue;
+          sum += tmp[yy*w+x]; cnt++;
+        }
+        heightMap[(minY+y)*W+minX+x] = sum/cnt;
+      }
+    }
+  }
+  // 真正靜止不動超過這個時間才算「長按加深」,避免下筆瞬間的反應延遲、
+  // 或收筆前滑鼠自然減速造成起筆/收筆比中段筆畫還重
+  let stillStart = 0;
+  const HOLD_DELAY = 260;
+
+  // 最近 3 個筆畫取樣點,用來把折線畫成平滑的曲線——真實滑鼠/觸控板移動
+  // 即使看起來是直線,每個 frame 回報的座標還是會有一點點方向上的抖動,
+  // 如果直接依序連成一截一截的直線段,膠囊跟膠囊交界處會因為方向忽左忽右
+  // 留下看得出來的摺痕(尤其轉彎、繞圈的地方特別明顯)。改成每三個點用中點
+  // 當端點、中間那一點當控制點的二次貝茲取代,畫出來的路徑本身就是平滑的
+  // 曲線,不會再出現銳角交界,不管畫多快、轉多急都一樣平順。
+  let ptHistory = [];
+  function stampSmoothPath(newX, newY, dirtyBox){
+    ptHistory.push([newX, newY]);
+    if (ptHistory.length > 3) ptHistory.shift();
+    if (ptHistory.length < 3){
+      stampSegment(prevSmX, prevSmY, newX, newY, dirtyBox);
+      return;
+    }
+    const [p0, p1, p2] = ptHistory;
+    const m0x = (p0[0]+p1[0])/2, m0y = (p0[1]+p1[1])/2;
+    const m1x = (p1[0]+p2[0])/2, m1y = (p1[1]+p2[1])/2;
+    const approxLen = Math.hypot(p1[0]-m0x,p1[1]-m0y) + Math.hypot(m1x-p1[0],m1y-p1[1]);
+    const steps = Math.max(2, Math.min(14, Math.ceil(approxLen / Math.max(4, brushRadius*0.25))));
+    let lastX = m0x, lastY = m0y;
+    for (let i=1; i<=steps; i++){
+      const tt = i/steps, mt = 1-tt;
+      const bx = mt*mt*m0x + 2*mt*tt*p1[0] + tt*tt*m1x;
+      const by = mt*mt*m0y + 2*mt*tt*p1[1] + tt*tt*m1y;
+      stampSegment(lastX, lastY, bx, by, dirtyBox);
+      lastX = bx; lastY = by;
+    }
+  }
+
+  // canvas 用 object-fit:cover 顯示,CSS 框的長寬比跟內部 960x580 不一定相同,
+  // 所以要還原 cover 的縮放與裁切位移,滑鼠座標才會對應到正確的內部像素
+  function toCanvasXY(e){
+    const rect = canvas.getBoundingClientRect();
+    const scale = Math.max(rect.width / W, rect.height / H);
+    const dispW = W * scale, dispH = H * scale;
+    const offX = (rect.width - dispW) / 2;
+    const offY = (rect.height - dispH) / 2;
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    return [ (px - offX) / scale, (py - offY) / scale ];
+  }
+
+  function smoothAlpha(){
+    const amt = smoothing/100;
+    return 1 - amt*0.97; // smoothing=0 -> 1(立即跟隨);smoothing=100 -> 0.03(明顯延遲、線條平滑)
+  }
+
+  // 整段路徑用「點到線段」的膠囊距離場一次算完,而不是沿路徑切成好幾個
+  // 獨立的圓形蓋章再疊起來——後者在兩個蓋章中心之間會因為各自的衰減曲線
+  // 互相取高點,留下一圈一圈的接縫,筆觸會變成一節一節的,而不是平順的一條
+  function stampSegment(fromX, fromY, toX, toY, dirtyBox){
+    const r = brushRadius;
+    // 拖曳的每一段路徑只會經過一次,不像長按同一點會被重複蓋章很多次,
+    // 所以這裡故意給一個遠超過上限的增量,讓每個像素在「這一次」經過時
+    // 就直接吃滿它當下該有的高度,而不是要靠好幾個 frame 疊加才追得到——
+    // 不然快速拖曳時每個點被蓋到的次數會不均勻,壓痕就會忽深忽淺、一節一節的。
+    // 真正的深度上限還是由 applyStrokeDelta 裡的平滑上限夾住,不會因此過頭。
+    const inc = MAX_HEIGHT * 3 * mode;
+    const dx = toX-fromX, dy = toY-fromY;
+    const segLenSq = dx*dx + dy*dy;
+    const minX = Math.floor(Math.min(fromX,toX)-r), maxX = Math.ceil(Math.max(fromX,toX)+r);
+    const minY = Math.floor(Math.min(fromY,toY)-r), maxY = Math.ceil(Math.max(fromY,toY)+r);
+    const x0 = Math.max(0,minX), x1 = Math.min(W-1,maxX);
+    const y0 = Math.max(0,minY), y1 = Math.min(H-1,maxY);
+    for (let y=y0; y<=y1; y++){
+      for (let x=x0; x<=x1; x++){
+        let px, py;
+        if (segLenSq < 1e-6){
+          px = fromX; py = fromY;
+        } else {
+          let tt = ((x-fromX)*dx + (y-fromY)*dy) / segLenSq;
+          tt = Math.max(0, Math.min(1, tt));
+          px = fromX + dx*tt; py = fromY + dy*tt;
+        }
+        const ddx = x-px, ddy = y-py;
+        const dist = Math.sqrt(ddx*ddx+ddy*ddy);
+        if (dist>r) continue;
+        let t = 1 - dist/r;
+        t = t*t*(3-2*t); // smoothstep,跟 stamp() 用同一種柔和斷面
+        applyStrokeDelta(y*W+x, t, inc);
+      }
+    }
+    dirtyBox.minX = Math.min(dirtyBox.minX, x0-1);
+    dirtyBox.minY = Math.min(dirtyBox.minY, y0-1);
+    dirtyBox.maxX = Math.max(dirtyBox.maxX, x1+1);
+    dirtyBox.maxY = Math.max(dirtyBox.maxY, y1+1);
+  }
+
+  canvas.addEventListener('pointerdown', (e)=>{
+    const xy = toCanvasXY(e);
+    if (pendingStamp){
+      canvas.setPointerCapture(e.pointerId);
+      draggingStamp = true;
+      pendingStamp.showGhost = true;
+      stampDragDX = xy[0] - pendingStamp.cx;
+      stampDragDY = xy[1] - pendingStamp.cy;
+      redrawOverlayOnly();
+      e.preventDefault();
+      return;
+    }
+    pushUndo();
+    strokeBase = heightMap.slice();
+    strokeMap = new Float32Array(W*H);
+    isDown = true;
+    strokeDirty = {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity};
+    canvas.setPointerCapture(e.pointerId);
+    rawX = xy[0]; rawY = xy[1];
+    smX = prevSmX = rawX; smY = prevSmY = rawY;
+    ptHistory = [[rawX, rawY]];
+    stillStart = 0;
+    e.preventDefault();
+  });
+  canvas.addEventListener('pointermove', (e)=>{
+    const xy = toCanvasXY(e);
+    if (draggingStamp && pendingStamp){
+      pendingStamp.cx = xy[0] - stampDragDX;
+      pendingStamp.cy = xy[1] - stampDragDY;
+      redrawOverlayOnly();
+      e.preventDefault();
+      return;
+    }
+    if (!isDown) return;
+    rawX = xy[0]; rawY = xy[1];
+    e.preventDefault();
+  });
+  function stopDraw(){
+    if (draggingStamp){ draggingStamp = false; return; }
+    if (!isDown) return;
+    isDown = false;
+    stillStart = 0;
+    // 放開滑鼠後,直接補一段到放開當下的實際位置,確保線條不會斷在半路;
+    // 一次到位(而不是分好幾步收斂),才不會在收筆處疊出一團比較重的痕跡
+    const dirtyBox = {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity};
+    stampSmoothPath(rawX, rawY, dirtyBox);
+    smX = prevSmX = rawX; smY = prevSmY = rawY;
+    if (dirtyBox.maxX>=dirtyBox.minX){
+      paintRegion(dirtyBox.minX, dirtyBox.minY, dirtyBox.maxX, dirtyBox.maxY);
+    }
+    mergeDirty(strokeDirty, dirtyBox);
+    if (strokeDirty && strokeDirty.maxX>=strokeDirty.minX){
+      const blurRadius = Math.max(1, Math.round(brushRadius*0.12));
+      const pad = blurRadius+1;
+      blurHeightRegion(strokeDirty.minX-pad, strokeDirty.minY-pad, strokeDirty.maxX+pad, strokeDirty.maxY+pad, blurRadius);
+      paintRegion(strokeDirty.minX-pad, strokeDirty.minY-pad, strokeDirty.maxX+pad, strokeDirty.maxY+pad);
+    }
+    strokeDirty = null;
+  }
+  canvas.addEventListener('pointerup', stopDraw);
+  canvas.addEventListener('pointercancel', stopDraw);
+  canvas.addEventListener('pointerleave', stopDraw);
+
+  function tick(){
+    if (isDown){
+      const alpha = smoothAlpha();
+      smX += (rawX-smX)*alpha;
+      smY += (rawY-smY)*alpha;
+
+      const dist = Math.hypot(smX-prevSmX, smY-prevSmY);
+      const dirtyBox = {minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity};
+      let painted = false;
+
+      if (dist > 0.4){
+        // 確實在移動:沿路徑蓋章,不會因為每一個 rAF frame 都蓋一次而額外加重
+        stillStart = 0;
+        stampSmoothPath(smX, smY, dirtyBox);
+        prevSmX = smX; prevSmY = smY;
+        painted = true;
+      } else {
+        // 幾乎沒動:要停留超過 HOLD_DELAY 才算「刻意長按」開始加深,
+        // 下筆瞬間或收筆前的自然停頓(通常遠短於這個時間)不會被誤判
+        if (!stillStart) stillStart = performance.now();
+        if (performance.now() - stillStart > HOLD_DELAY){
+          stamp(smX, smY, dirtyBox);
+          painted = true;
+        }
+      }
+
+      if (painted && dirtyBox.maxX>=dirtyBox.minX){
+        paintRegion(dirtyBox.minX, dirtyBox.minY, dirtyBox.maxX, dirtyBox.maxY);
+        mergeDirty(strokeDirty, dirtyBox);
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ---- 控制項 ----
+  const modeEmbossBtn = document.getElementById('modeEmboss');
+  const modeDebossBtn = document.getElementById('modeDeboss');
+  const stageStatus = document.getElementById('stageStatus');
+  modeEmbossBtn.addEventListener('click', ()=>{
+    mode = 1;
+    modeEmbossBtn.classList.add('active');
+    modeDebossBtn.classList.remove('active');
+    stageStatus.textContent = 'Emboss';
+    if (pendingStamp) redrawOverlayOnly();
+  });
+  modeDebossBtn.addEventListener('click', ()=>{
+    mode = -1;
+    modeDebossBtn.classList.add('active');
+    modeEmbossBtn.classList.remove('active');
+    stageStatus.textContent = 'Deboss';
+    if (pendingStamp) redrawOverlayOnly();
+  });
+
+  const brushSizeInput = document.getElementById('brushSize');
+  const brushSizeVal = document.getElementById('brushSizeVal');
+  brushSizeInput.addEventListener('input', ()=>{
+    const raw = parseInt(brushSizeInput.value,10);
+    brushRadius = raw * DPR;
+    brushSizeVal.textContent = raw;
+  });
+
+  const smoothingInput = document.getElementById('smoothing');
+  const smoothingValEl = document.getElementById('smoothingVal');
+  smoothingInput.addEventListener('input', ()=>{
+    smoothing = parseInt(smoothingInput.value,10);
+    smoothingValEl.textContent = smoothing;
+  });
+
+  const depthInput = document.getElementById('depth');
+  const depthValEl = document.getElementById('depthVal');
+  depthInput.addEventListener('input', ()=>{
+    MAX_HEIGHT = parseInt(depthInput.value,10);
+    depthValEl.textContent = MAX_HEIGHT;
+    if (pendingStamp) redrawOverlayOnly();
+  });
+
+  // ---- Light Angle:Photoshop 風格的圓形轉盤 + 可直接輸入數字的欄位 ----
+  const lightAngleInput = document.getElementById('lightAngle');
+  const angleDial = document.getElementById('angleDial');
+  const angleNeedle = document.getElementById('angleNeedle');
+
+  function setLightAngle(deg){
+    deg = ((Math.round(deg) % 360) + 360) % 360;
+    lightAngleDeg = deg;
+    lightAngleInput.value = deg;
+    angleNeedle.style.transform = `rotate(${deg}deg)`;
+    updateLight();
+    fullRepaint();
+  }
+
+  lightAngleInput.addEventListener('input', ()=>{
+    const v = parseInt(lightAngleInput.value,10);
+    if (!isNaN(v)) setLightAngle(v);
+  });
+
+  let draggingAngle = false;
+  function angleFromPointer(e){
+    const rect = angleDial.getBoundingClientRect();
+    const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+    return Math.atan2(e.clientY-cy, e.clientX-cx) * 180/Math.PI;
+  }
+  angleDial.addEventListener('pointerdown', (e)=>{
+    draggingAngle = true;
+    angleDial.setPointerCapture(e.pointerId);
+    setLightAngle(angleFromPointer(e));
+    e.preventDefault();
+  });
+  angleDial.addEventListener('pointermove', (e)=>{
+    if (!draggingAngle) return;
+    setLightAngle(angleFromPointer(e));
+  });
+  angleDial.addEventListener('pointerup', ()=>{ draggingAngle = false; });
+  angleDial.addEventListener('pointercancel', ()=>{ draggingAngle = false; });
+  angleNeedle.style.transform = `rotate(${lightAngleDeg}deg)`;
+
+  // ---- Light Intensity:滑桿 + 可直接輸入數字的欄位,一樣是 Photoshop 常見的配對 ----
+  const lightIntensityInput = document.getElementById('lightIntensity');
+  const lightIntensityValEl = document.getElementById('lightIntensityVal');
+
+  function setLightIntensity(raw){
+    raw = Math.max(20, Math.min(200, Math.round(raw)));
+    lightIntensity = raw/100;
+    lightIntensityInput.value = raw;
+    lightIntensityValEl.value = raw;
+    fullRepaint();
+  }
+
+  lightIntensityInput.addEventListener('input', ()=>{
+    setLightIntensity(parseInt(lightIntensityInput.value,10));
+  });
+  lightIntensityValEl.addEventListener('input', ()=>{
+    const v = parseInt(lightIntensityValEl.value,10);
+    if (!isNaN(v)) setLightIntensity(v);
+  });
+
+  const svgUploadInput = document.getElementById('svgUpload');
+  const svgUploadBtn = document.getElementById('svgUploadBtn');
+  const stampControls = document.getElementById('stampControls');
+  const stampScaleInput = document.getElementById('stampScale');
+  const stampScaleVal = document.getElementById('stampScaleVal');
+  const applyStampBtn = document.getElementById('applyStampBtn');
+  const removeStampBtn = document.getElementById('removeStampBtn');
+
+  svgUploadBtn.addEventListener('click', ()=> svgUploadInput.click());
+  svgUploadInput.addEventListener('change', (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if (file) loadSvgStamp(file);
+    svgUploadInput.value = '';
+  });
+  stampScaleInput.addEventListener('input', ()=>{
+    if (!pendingStamp) return;
+    pendingStamp.scalePct = parseInt(stampScaleInput.value,10);
+    stampScaleVal.textContent = pendingStamp.scalePct;
+    redrawOverlayOnly();
+  });
+  applyStampBtn.addEventListener('click', applyStamp);
+  removeStampBtn.addEventListener('click', ()=>{
+    clearStamp();
+    stampControls.style.display = 'none';
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    pushUndo();
+    heightMap.fill(0);
+    fullRepaint();
+  });
+
+  document.getElementById('undoBtn').addEventListener('click', doUndo);
+  document.getElementById('redoBtn').addEventListener('click', doRedo);
+  window.addEventListener('keydown', (e)=>{
+    const key = e.key.toLowerCase();
+    if ((e.metaKey || e.ctrlKey) && key === 'z' && !e.shiftKey){
+      e.preventDefault();
+      doUndo();
+    } else if ((e.metaKey || e.ctrlKey) && (key === 'y' || (key === 'z' && e.shiftKey))){
+      e.preventDefault();
+      doRedo();
+    }
+  });
+
+  document.getElementById('downloadBtn').addEventListener('click', ()=>{
+    const a = document.createElement('a');
+    a.download = 'foil-emboss.png';
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+  });
+
+  // ---- 啟動:先把底圖照片載入、鋪滿畫布,完成後才開始繪製與互動迴圈 ----
+  generateFoilTexture(()=>{
+    fullRepaint();
+    requestAnimationFrame(tick);
+  });
+})();
+</script>
+</body>
+</html>

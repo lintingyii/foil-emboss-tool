@@ -340,6 +340,21 @@
     transition:background .15s ease, color .15s ease;
     width:100%;
   }
+  /* ---- Stamp 區塊的打字輸入框,跟旁邊的 Add 按鈕排成一列,
+     按鈕不像其他 .btn 那樣撐滿整列 ---- */
+  .text-input{
+    flex:1 1 auto;
+    min-width:0;
+    border:1px solid var(--line);
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:12px;
+    padding:9px 10px;
+  }
+  .text-input:focus{ outline:none; border-color:var(--accent); }
+  .text-input::placeholder{ color:var(--sub); }
+  .row > .btn{ flex:0 0 auto; width:auto; }
   .btn:hover{ background:var(--text); color:var(--bg); }
   .btn.primary{
     background:var(--text);
@@ -395,7 +410,7 @@
   </div>
 
   <div class="panel">
-    <h2>Press Controls</h2>
+    <h2>Controls</h2>
 
     <div class="group">
       <label class="title">Mode</label>
@@ -460,8 +475,13 @@
     <div class="divider"></div>
 
     <div class="group">
+      <label class="title">Stamp</label>
       <input type="file" id="svgUpload" accept=".svg,image/svg+xml" style="display:none">
-      <button class="btn" id="svgUploadBtn">Upload SVG Stamp…</button>
+      <button class="btn" id="svgUploadBtn">Upload SVG…</button>
+      <div class="row">
+        <input type="text" id="textStampInput" class="text-input" placeholder="Type text…" maxlength="40">
+        <button class="btn" id="addTextStampBtn">Add</button>
+      </div>
     </div>
 
     <div class="group" id="stampControls" style="display:none">
@@ -873,6 +893,48 @@
       alert('Could not load this file as an SVG image.');
     };
     svgImg.src = url;
+  }
+
+  // 打字印章:把文字畫到一張暫存 canvas 上當成遮罩,之後完全沿用 SVG 印章
+  // 同一套管線(拖曳定位、Apply Stamp、Depth/Size/Soften 的斜面運算)——
+  // pendingStamp 只在乎自己是一張有 alpha 遮罩的圖,不在乎那張圖原本是
+  // SVG 還是文字畫出來的。
+  function loadTextStamp(text){
+    text = text.trim();
+    if (!text) return;
+    const fontSize = 220;
+    const fontFamily = `700 ${fontSize}px 'Space Mono', 'Courier New', monospace`;
+    const measure = document.createElement('canvas').getContext('2d');
+    measure.font = fontFamily;
+    const padX = fontSize*0.22, padY = fontSize*0.3;
+    const tw = Math.max(1, Math.ceil(measure.measureText(text).width + padX*2));
+    const th = Math.ceil(fontSize + padY*2);
+    const tmp = document.createElement('canvas');
+    tmp.width = tw; tmp.height = th;
+    const tctx = tmp.getContext('2d');
+    tctx.font = fontFamily;
+    tctx.fillStyle = '#000';
+    tctx.textBaseline = 'alphabetic';
+    tctx.fillText(text, padX, padY + fontSize*0.72);
+
+    const textImg = new Image();
+    textImg.onload = ()=>{
+      const maxDim = Math.min(W,H) * 0.55;
+      const fit = Math.min(maxDim/tw, maxDim/th, 1) || 1;
+      if (pendingStamp && pendingStamp.url) URL.revokeObjectURL(pendingStamp.url);
+      pendingStamp = {
+        img: textImg, url: null,
+        baseW: tw*fit, baseH: th*fit,
+        cx: W/2, cy: H/2,
+        scalePct: 100,
+        showGhost: true
+      };
+      stampScaleInput.value = 100;
+      stampScaleVal.textContent = 100;
+      stampControls.style.display = '';
+      fullRepaint();
+    };
+    textImg.src = tmp.toDataURL('image/png');
   }
 
   // ---- 筆刷 ----
@@ -1317,6 +1379,18 @@
     if (file) loadSvgStamp(file);
     svgUploadInput.value = '';
   });
+
+  const textStampInput = document.getElementById('textStampInput');
+  const addTextStampBtn = document.getElementById('addTextStampBtn');
+  function addTextStamp(){
+    loadTextStamp(textStampInput.value);
+    textStampInput.value = '';
+  }
+  addTextStampBtn.addEventListener('click', addTextStamp);
+  textStampInput.addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter') addTextStamp();
+  });
+
   stampScaleInput.addEventListener('input', ()=>{
     if (!pendingStamp) return;
     pendingStamp.scalePct = parseInt(stampScaleInput.value,10);

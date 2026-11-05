@@ -851,11 +851,21 @@
         if (cy2<minY) minY=cy2; if (cy2>maxY) maxY=cy2;
       }
     }
+    // 印章的斜面是從 canvas 的 alpha 通道(8-bit,只有 256 階)模糊出來的,
+    // 壓下去的高度直接跟著這 256 階走,斜面越寬、Depth 調越高,每一階之間
+    // 這一點點高度落差被光影誇張到看得見,就會變成一圈一圈等高線般的階梯紋。
+    // 這裡額外對剛剛寫入的這塊高度圖做一次小範圍模糊——不是再疊一層遮罩,
+    // 是直接在已經是連續浮點數的 heightMap 上抹開,把離散的階梯融成連續漸層,
+    // 斜面的整體輪廓不會因此被柔化走樣。
+    const dq = Math.max(2, Math.round(DPR));
+    if (maxX>=minX){
+      blurHeightRegion(minX-dq, minY-dq, maxX+dq, maxY+dq, dq);
+    }
     // 壓下去之後就把半透明的定位預覽收起來,畫面只留下真正壓進鋁箔的浮雕效果,
     // 不會有一層貼在表面上的剪影;要再壓一次時,一拖曳就會重新顯示預覽
     pendingStamp.showGhost = false;
     if (maxX>=minX){
-      paintRegion(minX-1, minY-1, maxX+1, maxY+1);
+      paintRegion(minX-dq, minY-dq, maxX+dq, maxY+dq);
     } else {
       fullRepaint();
     }

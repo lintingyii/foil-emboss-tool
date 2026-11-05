@@ -854,18 +854,27 @@
     // 印章的斜面是從 canvas 的 alpha 通道(8-bit,只有 256 階)模糊出來的,
     // 壓下去的高度直接跟著這 256 階走,斜面越寬、Depth 調越高,每一階之間
     // 這一點點高度落差被光影誇張到看得見,就會變成一圈一圈等高線般的階梯紋。
-    // 這裡額外對剛剛寫入的這塊高度圖做一次小範圍模糊——不是再疊一層遮罩,
-    // 是直接在已經是連續浮點數的 heightMap 上抹開,把離散的階梯融成連續漸層,
-    // 斜面的整體輪廓不會因此被柔化走樣。
-    const dq = Math.max(2, Math.round(DPR));
+    // 最外圍(alpha 趨近 0 的那一圈)又是落差最急的地方——alpha 再往外一格
+    // 就直接是完全沒碰過的 0,中間沒有過渡,這圈「斷崖」在 Depth 調高時會被
+    // 鋸齒狀地放大成一條跟著形狀輪廓走的細亮線。這裡額外對剛剛寫入的這塊
+    // 高度圖做兩次小範圍模糊——不是再疊一層遮罩,是直接在已經是連續浮點數的
+    // heightMap 上抹開,把離散的階梯跟最外圍的斷崖都融成連續漸層,疊兩次
+    // 模糊是為了讓落差被抹開的曲線更像高斯、不是生硬的三角斜坡。模糊「視窗」
+    // 要留的邊界餘量(dqPad)必須明顯比模糊半徑(dq)本身還寬:疊兩次的尾巴
+    // 要收斂到幾乎是 0,需要的空間遠不只模糊半徑那麼一點點——邊界留太窄,
+    // 模糊在視窗邊緣被硬生生截斷,反而會在那裡冒出一條新的、只是比較矮的斷崖,
+    // 跟原本要修的問題一樣會被 Depth 放大。斜面的整體輪廓不會因此被柔化走樣。
+    const dq = Math.max(3, Math.round(DPR*2));
+    const dqPad = dq*4;
     if (maxX>=minX){
-      blurHeightRegion(minX-dq, minY-dq, maxX+dq, maxY+dq, dq);
+      blurHeightRegion(minX-dqPad, minY-dqPad, maxX+dqPad, maxY+dqPad, dq);
+      blurHeightRegion(minX-dqPad, minY-dqPad, maxX+dqPad, maxY+dqPad, dq);
     }
     // 壓下去之後就把半透明的定位預覽收起來,畫面只留下真正壓進鋁箔的浮雕效果,
     // 不會有一層貼在表面上的剪影;要再壓一次時,一拖曳就會重新顯示預覽
     pendingStamp.showGhost = false;
     if (maxX>=minX){
-      paintRegion(minX-dq, minY-dq, maxX+dq, maxY+dq);
+      paintRegion(minX-dqPad, minY-dqPad, maxX+dqPad, maxY+dqPad);
     } else {
       fullRepaint();
     }

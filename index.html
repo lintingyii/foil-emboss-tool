@@ -261,7 +261,7 @@
   .val{
     font-size:12px;
     color:var(--sub-2);
-    width:28px;
+    min-width:30px;
     text-align:right;
     font-weight:700;
   }
@@ -408,26 +408,26 @@
     <div class="divider"></div>
 
     <div class="group">
-      <label class="title">Brush Size</label>
-      <div class="row">
-        <input type="range" id="brushSize" min="8" max="90" value="34">
-        <span class="val" id="brushSizeVal">34</span>
-      </div>
-    </div>
-
-    <div class="group">
-      <label class="title">Smoothing</label>
-      <div class="row">
-        <input type="range" id="smoothing" min="0" max="100" value="0">
-        <span class="val" id="smoothingVal">0</span>
-      </div>
-    </div>
-
-    <div class="group">
       <label class="title">Depth</label>
       <div class="row">
-        <input type="range" id="depth" min="4" max="48" value="24">
-        <span class="val" id="depthVal">24</span>
+        <input type="range" id="depth" min="1" max="1000" value="100">
+        <span class="val" id="depthVal">100%</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <label class="title">Size</label>
+      <div class="row">
+        <input type="range" id="brushSize" min="8" max="90" value="34">
+        <span class="val" id="brushSizeVal">34px</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <label class="title">Soften</label>
+      <div class="row">
+        <input type="range" id="soften" min="0" max="20" value="4">
+        <span class="val" id="softenVal">4px</span>
       </div>
     </div>
 
@@ -506,7 +506,9 @@
   let brushRadius = 34 * DPR; // 內部像素半徑,隨 DPR 縮放,維持跟滑桿數字一致的視覺大小
   let lightAngleDeg = 315;
   let lightIntensity = 1; // 「Light Intensity」滑桿:整體光影強度,調低可以讓陰影不要太深
-  let MAX_HEIGHT = 24; // 「Depth」滑桿:壓痕能壓多深的上限,越大浮凸/壓凹的立體感越明顯
+  const MAX_HEIGHT = 24; // 壓痕實際能壓多深的上限,固定不給調:跟 Adobe Photoshop 的
+  // Bevel & Emboss 一樣,「Depth」調的是光影的誇張程度,不是壓痕真的壓多深
+  let softenPx = 4; // 「Soften」滑桿:筆畫收尾時用來柔化壓痕表面的模糊半徑(px,未乘 DPR)
 
   // ---- 資料陣列 ----
   // 高度圖全部從 0 開始、完全平:凹凸完全來自使用者的筆刷或壓紋,
@@ -646,32 +648,32 @@
   // ---- 光源向量:只用來讓壓痕呈現有方向性的光影,不再對整張照片疊加
   // 任何人工漸層或雜訊,平面(沒被按過)的地方永遠原樣顯示底圖照片 ----
   let light = {x:0,y:0,z:0};
-  let flatDiff = 0, flatSpec = 0; // 完全平面時的基準亮度,之後只疊「跟平面的差異」
+  let flatDiff = 0; // 完全平面(法線正朝上)時的 N·L 基準值,之後只疊「跟這個基準比起來」的差異
   function updateLight(){
     const rad = lightAngleDeg * Math.PI/180;
     const elev = 55 * Math.PI/180;
     light.x = Math.cos(rad)*Math.cos(elev);
     light.y = Math.sin(rad)*Math.cos(elev);
     light.z = Math.sin(elev);
-
-    flatDiff = Math.max(0, light.z);
-    let hx=light.x, hy=light.y, hz=light.z+1;
-    const hlen = Math.hypot(hx,hy,hz) || 1;
-    hx/=hlen; hy/=hlen; hz/=hlen;
-    const ndoth0 = Math.max(0, hz);
-    flatSpec = Math.pow(ndoth0, SHIN_TIGHT)*SPEC_TIGHT + Math.pow(ndoth0, SHIN_BROAD)*SPEC_BROAD;
+    flatDiff = light.z;
   }
 
-  const NORMAL_SCALE = 1.4; // 跟 Depth 一起決定陰影多快就死黑:調低才能讓整條 Depth 滑桿有感,不會低、中、高都一樣黑
-  const DIFFUSE_GAIN = 150; // 壓痕亮暗對比的強度
-  const SPEC_TIGHT = 1.3, SHIN_TIGHT = 90;
-  const SPEC_BROAD = 0.6, SHIN_BROAD = 6;
-  const SPEC_GAIN = 255;
+  // 跟 Adobe Photoshop 的 Bevel & Emboss 一樣:「Depth」調的不是壓痕的物理深度,
+  // 而是法線被誇張的程度(NORMAL_SCALE),Depth=100% 對應下面這個基準值
+  const BASE_NORMAL_SCALE = 1.4;
+  let NORMAL_SCALE = BASE_NORMAL_SCALE;
+  const HIGHLIGHT_GAIN = 150; // 朝光面最多能亮多少
+  const SHADOW_GAIN = 165;    // 背光面最多能暗多少
+  const GLOSS_GAIN = 70;      // 最朝光的地方再疊一點集中的金屬光澤
 
   updateLight();
 
   // 算出 (x,y) 這個像素「跟平面相比多出來的光影」,直接疊到照片原本的 RGB 上;
-  // 完全沒被按壓的地方 delta 必然是 0,畫面就是原始照片,不會被其他效果蓋掉
+  // 完全沒被按壓的地方 delta 必然是 0,畫面就是原始照片,不會被其他效果蓋掉。
+  // 朝光面(hi)/背光面(sh)分別依照各自能跑的範圍正規化到 0~1 再乘上固定的
+  // 強度常數——不像舊版直接把「跟基準的差」乘上一個固定增益,那樣背光面可以
+  // 跑的數值範圍天生就比朝光面大,很容易衝出合理範圍、被夾死成一整片死黑,
+  // 這正是 deboss(凹痕)看起來只剩下一條黑線、不像 Photoshop 那樣有層次的原因。
   function shadeAndWritePixel(x, y, pIdx){
     const xm = x>0?x-1:x, xp = x<W-1?x+1:x;
     const ym = y>0?y-1:y, yp = y<H-1?y+1:y;
@@ -686,15 +688,17 @@
       const len = Math.hypot(nx,ny,nz) || 1;
       nx/=len; ny/=len; nz/=len;
 
-      const diff = Math.max(0, nx*light.x + ny*light.y + nz*light.z);
+      const ndotl = nx*light.x + ny*light.y + nz*light.z;
 
-      let hx = light.x, hy = light.y, hz = light.z + 1;
-      const hlen = Math.hypot(hx,hy,hz) || 1;
-      hx/=hlen; hy/=hlen; hz/=hlen;
-      const ndoth = Math.max(0, nx*hx + ny*hy + nz*hz);
-      const spec = Math.pow(ndoth, SHIN_TIGHT)*SPEC_TIGHT + Math.pow(ndoth, SHIN_BROAD)*SPEC_BROAD;
+      let hi = 0, sh = 0;
+      if (ndotl > flatDiff){
+        hi = (ndotl - flatDiff) / Math.max(1e-4, 1 - flatDiff);
+      } else {
+        sh = (flatDiff - ndotl) / Math.max(1e-4, 1 + flatDiff);
+      }
+      const gloss = hi*hi*hi*hi;
 
-      delta = ((diff-flatDiff)*DIFFUSE_GAIN + (spec-flatSpec)*SPEC_GAIN) * lightIntensity;
+      delta = (hi*HIGHLIGHT_GAIN - sh*SHADOW_GAIN + gloss*GLOSS_GAIN) * lightIntensity;
     }
 
     let r = photo[pIdx]+delta, g = photo[pIdx+1]+delta, b = photo[pIdx+2]+delta;
@@ -1148,10 +1152,12 @@
     }
     mergeDirty(strokeDirty, dirtyBox);
     if (strokeDirty && strokeDirty.maxX>=strokeDirty.minX){
-      const blurRadius = Math.max(1, Math.round(brushRadius*0.12));
-      const pad = blurRadius+1;
-      blurHeightRegion(strokeDirty.minX-pad, strokeDirty.minY-pad, strokeDirty.maxX+pad, strokeDirty.maxY+pad, blurRadius);
-      paintRegion(strokeDirty.minX-pad, strokeDirty.minY-pad, strokeDirty.maxX+pad, strokeDirty.maxY+pad);
+      const blurRadius = Math.round(softenPx * DPR);
+      if (blurRadius > 0){
+        const pad = blurRadius+1;
+        blurHeightRegion(strokeDirty.minX-pad, strokeDirty.minY-pad, strokeDirty.maxX+pad, strokeDirty.maxY+pad, blurRadius);
+        paintRegion(strokeDirty.minX-pad, strokeDirty.minY-pad, strokeDirty.maxX+pad, strokeDirty.maxY+pad);
+      }
     }
     strokeDirty = null;
   }
@@ -1217,22 +1223,23 @@
   brushSizeInput.addEventListener('input', ()=>{
     const raw = parseInt(brushSizeInput.value,10);
     brushRadius = raw * DPR;
-    brushSizeVal.textContent = raw;
+    brushSizeVal.textContent = raw + 'px';
   });
 
-  const smoothingInput = document.getElementById('smoothing');
-  const smoothingValEl = document.getElementById('smoothingVal');
-  smoothingInput.addEventListener('input', ()=>{
-    smoothing = parseInt(smoothingInput.value,10);
-    smoothingValEl.textContent = smoothing;
+  const softenInput = document.getElementById('soften');
+  const softenValEl = document.getElementById('softenVal');
+  softenInput.addEventListener('input', ()=>{
+    softenPx = parseInt(softenInput.value,10);
+    softenValEl.textContent = softenPx + 'px';
   });
 
   const depthInput = document.getElementById('depth');
   const depthValEl = document.getElementById('depthVal');
   depthInput.addEventListener('input', ()=>{
-    MAX_HEIGHT = parseInt(depthInput.value,10);
-    depthValEl.textContent = MAX_HEIGHT;
-    if (pendingStamp) redrawOverlayOnly();
+    const pct = parseInt(depthInput.value,10);
+    NORMAL_SCALE = BASE_NORMAL_SCALE * (pct/100);
+    depthValEl.textContent = pct + '%';
+    fullRepaint();
   });
 
   // ---- Light Angle:Photoshop 風格的圓形轉盤 + 可直接輸入數字的欄位 ----

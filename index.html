@@ -742,9 +742,11 @@
 
   // 把 SVG 形狀的邊緣做成斜面(bevel)而不是直上直下的懸崖:用模糊把 alpha
   // 遮罩的邊界拉出一段漸層寬度,中心仍然是滿深度的平台,邊緣則平滑斜降到 0,
-  // 這樣壓出來的形狀才會像真的被壓進去,而不是貼上去的一層剪影。斜面寬度跟著
-  // 「筆刷大小」設定走(筆刷越大,邊緣越鈍),同時不超過印章自身尺寸的一個比例,
-  // 避免小印章被糊成一團。回傳的 plan 給 applyStamp() 跟即時預覽共用同一份計算。
+  // 這樣壓出來的形狀才會像真的被壓進去,而不是貼上去的一層剪影。斜面寬度一部分
+  // 跟著「Size」走(筆刷越大,邊緣越鈍),一部分直接疊加「Soften」(柔化量),
+  // 這樣 Soften 滑桿對印章才會有看得出來的效果,不會只對手繪筆畫有用。
+  // 同時不超過印章自身尺寸的一個比例,避免小印章被糊成一團。回傳的 plan 給
+  // applyStamp() 跟即時預覽共用同一份計算。
   function buildStampPlan(){
     if (!pendingStamp) return null;
     const [dw, dh] = stampDestSize();
@@ -753,7 +755,7 @@
     const px0 = Math.round(pendingStamp.cx - dw/2);
     const py0 = Math.round(pendingStamp.cy - dh/2);
 
-    const bevelPx = Math.max(1.3, Math.min(Math.min(destW, destH) * 0.12, brushRadius * 0.12));
+    const bevelPx = Math.max(1.3, Math.min(Math.min(destW, destH) * 0.12, brushRadius * 0.12) + softenPx * DPR);
     const pad = Math.ceil(bevelPx * 3);
     const tw = destW + pad*2, th = destH + pad*2;
     const tmp = document.createElement('canvas');
